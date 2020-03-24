@@ -1,0 +1,655 @@
+---
+title: "Landing distance of a commercial flight"
+author: "by Hasnat Tahir"
+output: rmarkdown::github_document
+
+---
+```{r}
+knitr::opts_chunk$set(warning=FALSE,message=FALSE)
+```
+
+
+Libraries
+```{r Libraries, message=FALSE, warning=FALSE}
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(DataExplorer)
+library(broom)
+library(dplyr)
+library(MASS)
+```
+
+
+Step-1
+```{r}
+faa1 = read_excel('D:\\University\\Pet projects\\Airline\\FAA1.xls')
+
+faa2 = read_excel('D:\\University\\Pet projects\\Airline\\FAA2.xls')
+
+dim(faa1)
+dim(faa2)
+
+```
+Both FAA1 and FAA2 data sets have been imported.
+
+Step-2
+```{r}
+str(faa1)
+str(faa2)
+```
+In FAA1 data set there are 800 observations and 8 variables.
+In FAA2 data set there are 150 observations and 7 variables.
+The only difference is that 'duration' variable in not present in FAA2 data set.
+
+Step-3
+```{r}
+faa2$duration = NA # adds a duration column to facilitate merging
+
+faa = rbind(faa1, faa2) #merging the two data sets
+
+dim(faa)
+
+#duplicate values
+faa_uniq = faa %>% distinct(aircraft,distance,no_pasg,speed_ground,speed_air,height,pitch,.keep_all=TRUE)
+
+dim(faa_uniq)
+```
+100 duplicate values were observed. Yes, I got rid of those duplicate values as they are a result of some error and they might bias the prediction model.
+
+Step-4
+```{r}
+str(faa_uniq)
+
+summary(faa_uniq)
+```
+The combined data set 'faa' has 950 observations and 8 variables.
+
+### Step-5
+Key Observations:
+
+* The FAA2 data set doesn't have the duration variable.
+* The Height variable has some negative values.
+* The speed_air variable has approx 75% of the observation values missing.
+* Based on the problem statement, speed_ground and speed_air some values  <30 mph and >140 mph that are considered abnormal.
+* Duration variable too has some abnormal values that needs to be taken care before doing any analysis.
+
+Step-6
+```{r}
+#Negative Height and abnormal height
+Abnormal_Height = faa_uniq[faa_uniq$height < 6,]
+Abnormal_Height # 10 values
+
+
+#Abnormal Speeds
+Abnormal_speed = faa_uniq[(faa_uniq$speed_ground >140 | faa_uniq$speed_ground < 30),]
+Abnormal_speed # 3 abnormal values
+
+Abnormal_speed2 = faa_uniq[(faa_uniq$speed_air > 140 | faa_uniq$speed_air < 30) & (is.na(faa_uniq$speed_air) ==FALSE),]
+Abnormal_speed2 # 1 values
+
+#Duration
+Abnormal_duration = faa_uniq[(faa_uniq$duration< 40) & (is.na(faa_uniq$duration) ==FALSE),]
+Abnormal_duration # 5 values
+
+```
+* Height has 10 abnormal values.
+* speed_ground has 3 abnormal values.
+* speed_air has 1 abnormal values.
+* duration has 5 abnormal values.
+
+```{r}
+#removing abnormal values
+
+clean_faa = filter(faa_uniq, (faa_uniq$duration > 40 | is.na(faa_uniq$duration == T)))
+clean_faa1 = filter(clean_faa, ((clean_faa$speed_air >=30 & clean_faa$speed_air<=140) | is.na(clean_faa$speed_air == T)))
+
+clean_faa2 = filter(clean_faa1, ((clean_faa1$speed_ground >=30 & clean_faa1$speed_ground<=140)))
+
+clean_faa3 = filter(clean_faa2, clean_faa2$height >= 6)
+                              
+dim(clean_faa3)
+
+```
+All the abnormal values have been removed.
+
+
+Step-7
+```{r}
+str(clean_faa3)
+summary(clean_faa3)
+```
+
+
+Step-8
+```{r}
+plot_histogram(clean_faa3)
+plot_bar(clean_faa3$aircraft)
+```
+Above are the histograms for all the variables.
+
+### Step-9
+
+* speed_air and duration variables still have missing values.
+* height, speed_air, speed_ground and duration variables had abnormal values that have been removed.
+* The final clean data set has 832 observations and 8 variables.
+
+# Part 2
+
+### Step-1
+```{r}
+#binary variables
+clean_faa3$long.landing = ifelse(clean_faa3$distance > 2500, 1, 0)
+clean_faa3$risky.landing = ifelse(clean_faa3$distance > 3000, 1, 0)
+
+#deleting distance variable
+colnames(clean_faa3)
+
+new_faa = clean_faa3[,-8]
+head(new_faa)
+
+#aircraft to binary
+new_faa$aircraft = ifelse(new_faa$aircraft == "airbus", 1,0) 
+
+summary(new_faa$aircraft)
+typeof(new_faa$aircraft)
+```
+The binary variables long.landing and risky.landing have been created.
+
+### Step-2
+```{r}
+#pie chart showing distribution of long landing
+piec = table(new_faa$long.landing)
+lbl = c("Normal landing", "Long landing")
+
+pct = c(round(100-round(sum(new_faa$long.landing==1)/length(new_faa))), round(sum(new_faa$long.landing==1)/length(new_faa)))
+pct
+lbl = paste(lbl, pct) 
+lbl = paste(lbl,"%",sep="")
+pie(piec, labels = lbl, main = "Long Landing")
+
+```
+The above pie charts shows the distribution of Long landing and risky landing.
+
+### Step-3:
+```{r}
+#Creating table 2
+reg_glm = function(dat,vari){
+  z = glm(dat$long.landing~vari, family = binomial, data = dat)
+  x = tidy(z)$p.value[2]
+  y = tidy(z)$estimate[2]
+  return(c(y,x))
+}
+
+r1 = reg_glm(new_faa, new_faa$aircraft)
+r2 = reg_glm(new_faa, new_faa$duration)
+r3 = reg_glm(new_faa, new_faa$no_pasg)
+r4 = reg_glm(new_faa, new_faa$speed_ground)
+r5 = reg_glm(new_faa, new_faa$speed_air)
+r6 = reg_glm(new_faa, new_faa$height)
+r7 = reg_glm(new_faa, new_faa$pitch)
+
+tabl = rbind(r1,r2,r3,r4,r5,r6,r7)
+
+
+colnames(tabl) = c('Coefficients', 'p-value')
+
+tabl = as.data.frame(tabl)
+tabl['Direction'] = ifelse(tabl$Coefficients < 0, "Negative", "Positive")
+
+col_nam = c("aircraft", "duration","no_pasg","speed_ground","speed_air","height","pitch")
+
+tabx = cbind(col_nam,tabl)
+
+tabx['Odds ratio'] = exp(tabx$Coefficients)
+
+table = tabx[order(-tabx$`Odds ratio`, tabx$`p-value`),]
+table
+
+```
+The above table has been ordered by descending odds ratio and ascending p-values.
+
+Observations:
+
+* Coefficients for aircraft, duration, and no_pasg are negative
+* speed_air has the highest odds ratio 
+* variables height, duration, and no_pasg are insignificant based on thier p-values.  
+
+### Step-4:
+```{r jitter long}
+#jitter plots
+jp = function(vari,vname){
+  plot(jitter(new_faa$long.landing,0.1)~jitter(vari), new_faa,xlab = vname, ylab = "long landing", pch = ".")
+}
+
+jp(new_faa$speed_ground, "Speed ground")
+jp(new_faa$speed_air, "Speed air")
+jp(new_faa$height, "Height")
+jp(new_faa$duration, "Duration")
+jp(new_faa$no_pasg, "No. of passengers")
+jp(new_faa$pitch, "Pitch")
+jp(new_faa$aircraft, "Aircraft")
+```
+Observations:
+
+* As speed_ground or speed_air crosses a certain value the the number of long landing cases increases.
+* Based on the analysis in step-3&4 and step 16 of part 1, following variables have been selected for further analysis:
+  + Speed_air
+  + aircraft
+  + Height
+  + pitch
+
+### Step 5: Fitting model with the selected variables:
+```{r}
+#fitting model
+full_model = glm(long.landing~speed_air+aircraft+height+pitch, family = binomial, data= new_faa)
+summary(full_model)
+```
+* The above model gives an AIC of 44.856.
+* Coefficient of pitch variable comes out to be insignificant in the model
+* Aircraft variable has the biggest coefficient value
+
+
+```{r}
+#removing NA values
+new_faac = na.omit(new_faa)
+dim(new_faa)
+dim(new_faac)
+
+```
+Null values have been removed to perform Stepwise variable selection.  
+
+### Step-6:
+Forward stepwise selection:
+```{r Forward Stepwise , warning=FALSE}
+#forward selection using AIC
+null_mod = glm(long.landing~1, family = "binomial", data = new_faac)
+full_mod = glm(long.landing~., family = "binomial", data = new_faac[,-9])
+
+mod_step_f = step(null_mod,
+                  scope = list(lower= null_mod, upper = full_mod),
+                  direction = "forward")
+summary(mod_step_f)
+```
+As per the forward stepwise selection method using AIC following variables has been selected based on AIC:
+
+* speed_air
+* aircraft
+* height
+* pitch
+
+Yes, the results is consistent with the variable selection done after step 3. 
+
+### Step-7:
+```{r Forward Stepwise (BIC), warning=FALSE}
+#forward selection using BIC
+null_mod0 = glm(long.landing~1, family = "binomial", data = new_faac)
+full_mod0 = glm(long.landing~., family = "binomial", data = new_faac[,-9])
+
+mod_step_f0 = step(null_mod,
+                  scope = list(lower= null_mod0, upper = full_mod0),
+                  direction = "forward", k = log(length(new_faac$long.landing)))
+summary(mod_step_f0)
+
+table.selected = tidy(mod_step_f0)
+```
+As per the forward stepwise selection method using BIC following variables has been selected based on AIC:
+
+* speed_air
+* aircraft
+* height
+
+The only difference between variable selection using AIC and BIC is pitch was not included in the later method.
+
+### Step 8:
+
+**Model** : The ouput model of Forward stepwise using BIC has been selected as it gives the simplest model with almost same AIC value. *(long.landing ~ speed_air + aircraft + height)* 
+
+**Table**: 'table.selected' containing summary of selected model. So, that more about the selected model can be presented. 
+
+**Figures**: AIC and Residual Deviance of the selected model.
+
+* The risk factors associated with long landings are speed_air, aircraft and height.
+* If speed air is above a certain value the chances of long landing increses substantially.
+* As per the modeling, aircraft too has some influence on long landing, but it needs to be studied further.
+
+
+
+### Step 9:
+```{r}
+#pie chart showing distribution of risky landing
+piec1 = table(new_faa$risky.landing)
+lbl1 = c("Normal landing", "Risky landing")
+pct1 = c(100-round(sum(new_faa$risky.landing==1)/length(new_faa)), round(sum(new_faa$risky.landing==1)/length(new_faa)))
+pct1
+lbl1 = paste(lbl1, pct) 
+lbl1 = paste(lbl1,"%",sep="")
+pie(piec1, labels = lbl1, main = "Risky Landing" )
+
+```
+
+Of all the observations 12 percent have been categorised as risky landing.
+
+```{r table risky}
+#Creating table 2
+reg_glm1 = function(dat,vari){
+  z = glm(risky.landing~vari, family = binomial, data = dat)
+  x = tidy(z)$p.value[2]
+  y = tidy(z)$estimate[2]
+  return(c(y,x))
+}
+
+g1 = reg_glm1(new_faa, new_faa$aircraft)
+g2 = reg_glm1(new_faa, new_faa$duration)
+g3 = reg_glm1(new_faa, new_faa$no_pasg)
+g4 = reg_glm1(new_faa, new_faa$speed_ground)
+g5 = reg_glm1(new_faa, new_faa$speed_air)
+g6 = reg_glm1(new_faa, new_faa$height)
+g7 = reg_glm1(new_faa, new_faa$pitch)
+
+tabl1 = rbind(g1,g2,g3,g4,g5,g6,g7)
+
+
+colnames(tabl1) = c('Coefficients', 'p-value')
+
+tabl1 = as.data.frame(tabl1)
+tabl1['Direction'] = ifelse(tabl1$Coefficients < 0, "Negative", "Positive")
+
+col_nam = c("aircraft", "duration","no_pasg","speed_ground","speed_air","height","pitch")
+
+tabx1 = cbind(col_nam,tabl1)
+
+tabx1['Odds ratio'] = exp(tabx1$Coefficients)
+
+table1 = tabx1[order(-tabx1$`Odds ratio`, tabx1$`p-value`),]
+table1
+```
+The above table has been ordered by descending odds ratio and ascending p-values.
+
+Observations:
+
+* Coefficients for aircraft, duration, and no_pasg are negative
+* speed_air has the highest odds ratio 
+* variables pitch, height, duration, and no_pasg are insignificant based on thier p-values. 
+
+```{r}
+#jitter plots
+jp1 = function(vari,vname){
+  plot(jitter(new_faa$risky.landing,0.1)~jitter(vari), new_faa,xlab = vname, ylab = "risky landing", pch = ".")
+}
+
+jp1(new_faa$speed_ground, "Speed ground")
+jp1(new_faa$speed_air, "Speed air")
+jp1(new_faa$height, "Height")
+jp1(new_faa$duration, "Duration")
+jp1(new_faa$no_pasg, "No. of passengers")
+jp1(new_faa$pitch, "Pitch")
+jp1(new_faa$aircraft, "Aircraft")
+```
+
+Observations:
+
+* As speed_ground or speed_air crosses a certain value the the number of long landing cases increases.
+
+\ 
+```{r}
+full_model1 = glm(risky.landing~speed_air+aircraft, family = binomial, data= new_faa)
+summary(full_model1)
+```
+
+```{r}
+#AIC
+null_mod1 = glm(risky.landing~1, family = "binomial", data = new_faac)
+full_mod1 = glm(risky.landing~., family = "binomial", data = new_faac[,-8])
+
+mod_step_f1 = step(null_mod1,
+                  scope = list(lower= null_mod1, upper = full_mod1),
+                  direction = "forward")
+summary(mod_step_f1)
+```
+As per the forward stepwise selection method using AIC following variables has been selected based on AIC:
+
+* speed_air
+* aircraft
+
+```{r}
+#forward selection using BIC
+null_mod2 = glm(risky.landing~1, family = "binomial", data = new_faac)
+full_mod2 = glm(risky.landing~., family = "binomial", data = new_faac[,-8])
+
+mod_step_f2 = step(null_mod2,
+                  scope = list(lower= null_mod2, upper = full_mod2),
+                  direction = "forward", k = log(length(new_faac$risky.landing)))
+summary(mod_step_f2)
+
+table.risky = tidy(mod_step_f2)
+```
+As per the forward stepwise selection method using BIC following variables has been selected based on BIC:
+
+* speed_air
+* aircraft
+
+The variables selected are similar to what was selected using AIC.
+
+### Step 10
+
+**Model** : The ouput model of Forward stepwise using BIC has been selected. *(risky.landing ~ speed_air + aircraft)* 
+
+**Table**: 'table.risky' containing summary of selected model. So, that more about the selected model can be presented. 
+
+**Figures**: AIC and Residual Deviance of the selected model.
+
+* The risk factors associated with risky landings are speed_air and aircraft.
+* If speed air is above a certain value the chances of risky landing increses substantially.
+* As per the modeling, aircraft too has some influence on risky landing, but it needs to be studied further.
+
+
+### Step 11
+Difference between selected models for long landing and risky landing
+
+* Risky landing model has all the same variables as long landing model except height.
+* Based on the model, aircraft variable is more significant in long landing model.
+* BIC value for risky landing model is better than that of long landing model.
+
+### Step 12
+```{r}
+glm.long = glm(long.landing~speed_air+aircraft+height, family = binomial, data = new_faac)
+summary(glm.long)
+
+pred.prob1 = predict(glm.long, type = "response")
+
+#pred.out1 = ifelse(pred.prob1 < 0.5,"no","yes") 
+new_faac1 = data.frame(new_faac,pred.prob1)
+
+
+thresh = seq(0.01, 0.5, 0.01)
+sensitivity1 = specificity1 = rep(NA,length(thresh))
+for(j in seq(along= thresh)){
+pp1 = ifelse(new_faac1$pred.prob1<thresh[j],"no","yes")
+xx1 = xtabs(~long.landing+pp1,new_faac1)
+specificity1[j] = xx1[1,1]/(xx1[1,1]+xx1[1,2])
+sensitivity1[j] = xx1[2,2]/(xx1[2,1]+xx1[2,2])
+}
+#par(mfrow=c(1,2))
+#matplot(thresh,cbind(sensitivity,specificity),type="l",xlab="Threshold",ylab="Proportion",lty=1:2)
+#plot(1-specificity1,sensitivity1,type="l");abline(0,1,lty=2)
+```
+
+```{r}
+glm.risky = glm(risky.landing~speed_air+aircraft, family = binomial(link = "logit"), data = new_faac)
+summary(glm.risky)
+
+pred.prob2 = predict(glm.risky, type = "response")
+
+
+new_faac2 = data.frame(new_faac,pred.prob2)
+
+
+thresh = seq(0.01, 0.5, 0.01)
+sensitivity = specificity = rep(NA,length(thresh))
+for(j in seq(along= thresh)){
+pp = ifelse(new_faac2$pred.prob2<thresh[j],"no","yes")
+xx = xtabs(~risky.landing+pp,new_faac2)
+specificity[j] = xx[1,1]/(xx[1,1]+xx[1,2])
+sensitivity[j] = xx[2,2]/(xx[2,1]+xx[2,2])
+}
+
+
+#both ROC curves 
+plot(1-specificity1,sensitivity1,type="l", col = "Red", xlab="1-specificity", ylab = "Sensitivity", main = "ROC curves for Long.landing(Red) & Risky.landing(Black)") #long landing
+lines(1-specificity,sensitivity) #risky landing
+```
+
+The above plot shows ROC curve for the slected long and risky landing models
+
+There is a difference, area under the ROC curve of long.landing is more as compared to ROC curve for risky landing. 
+
+### Step 13
+```{r prediction}
+#long
+new_pred = data.frame(aircraft=0, duration = 200, no_pasg=80, speed_ground=115, speed_air=120, height = 40, pitch= 4)
+new_pred
+
+#predict 
+predict_1 = predict(mod_step_f0, newdata = new_pred, type = "response", se=T)
+
+#confidence interval
+
+c(predict_1$fit-1.96*predict_1$se.fit,predict_1$fit+1.96*predict_1$se.fit)
+
+#risky
+#predict 
+predict_1 = predict(mod_step_f2, newdata = new_pred, type = "response", se=T)
+
+#confidence interval
+
+c(predict_1$fit-1.96*predict_1$se.fit,predict_1$fit+1.96*predict_1$se.fit)
+
+```
+There is a very high probability of being a long as well as risky landing for the given commercial plane.
+
+### Step 14
+```{r}
+#probit model
+
+risky.probit = glm(risky.landing~speed_air+aircraft, family = "binomial"(link = "probit"), data = new_faac)
+#summary(risky.probit)
+
+#hazard model
+risky.hazard = glm(risky.landing~speed_air+aircraft, family = "binomial"(link = "cloglog"), data = new_faac)
+#summary(risky.hazard)
+
+# logit model
+#summary(glm.risky)
+
+```
+
+compare above probit and harzard model with logit model
+```{r}
+round(coef(glm.risky),3)
+round(coef(risky.probit),3)
+round(coef(risky.hazard),3)
+```
+The above output shows that coefficients of speed air and aircraft are bigger as compared to the probit and hazard model. 
+
+### Step 15
+```{r}
+#probit
+pred.prob3 = predict(risky.probit, type = "response")
+
+
+new_faac3 = data.frame(new_faac,pred.prob3)
+
+
+thresh = seq(0.01, 0.5, 0.01)
+sensitivity2 = specificity2 = rep(NA,length(thresh))
+for(j in seq(along= thresh)){
+pp2 = ifelse(new_faac3$pred.prob3<thresh[j],"no","yes")
+xx2 = xtabs(~risky.landing+pp2,new_faac3)
+specificity2[j] = xx2[1,1]/(xx2[1,1]+xx2[1,2])
+sensitivity2[j] = xx2[2,2]/(xx2[2,1]+xx2[2,2])
+}
+
+#hazard
+pred.prob4 = predict(risky.hazard, type = "response")
+
+
+new_faac4 = data.frame(new_faac,pred.prob4)
+
+
+thresh = seq(0.01, 0.5, 0.01)
+sensitivity3 = specificity3 = rep(NA,length(thresh))
+for(j in seq(along= thresh)){
+pp3 = ifelse(new_faac4$pred.prob4<thresh[j],"no","yes")
+xx3 = xtabs(~risky.landing+pp3,new_faac4)
+specificity3[j] = xx3[1,1]/(xx3[1,1]+xx3[1,2])
+sensitivity3[j] = xx3[2,2]/(xx3[2,1]+xx3[2,2])
+}
+
+
+#both ROC curves 
+plot(1-specificity,sensitivity,type="l", col = "Red", xlab="1-specificity", ylab = "Sensitivity", main = "ROC curves for risky.landing(logit = Red, probit = black, hazard = green") #logit
+lines(1-specificity2,sensitivity2) #probit
+lines(1-specificity3,sensitivity3, col = "green") #hazard
+```
+
+It is clear from the above ROC curve that Probit model has the highest area under the curve. 
+
+### Step 16
+```{r}
+#logit
+predval = sapply(list(glm.risky), fitted)
+colnames(predval) =  "logit"
+
+predv = as.data.frame(predval)
+
+order(-predv) #index
+
+top.5.logit = new_faac2[c(49,116,20,58,126), c(1,10)] # 0 boeing and 1 is airbus 
+top.5.logit
+
+#probit
+predval1 = sapply(list(risky.probit), fitted)
+colnames(predval1) =  "Probit"
+
+predv1 = as.data.frame(predval1)
+
+order(-predv1) #index
+
+top.5.probit = new_faac3[c(6,10,11,17,20), c(1,10)] # 0 boeing and 1 is airbus
+top.5.probit
+#hazard
+predval2 = sapply(list(risky.hazard), fitted)
+colnames(predval2) =  "Hazard"
+
+predv2 = as.data.frame(predval2)
+
+order(-predv2) #index
+
+top.5.hazard = new_faac4[c(6,10,11,17,20), c(1,10)] # 0 boeing and 1 is airbus
+top.5.hazard
+```
+Based of the above analayses:
+
+* For logit model out of top 5 risky landing 4 flights are Boeing and 1 is Airbus.
+* For Probit and Hazard model all top 5 risky landings are for Boeing.
+* All the observations have a predicted probability of 1.
+
+### Step 17
+```{r}
+#predict probit 
+predict.probit = predict(risky.probit, newdata = new_pred, type = "response", se=T)
+predict.probit
+#confidence interval
+
+c(predict.probit$fit-1.96*predict.probit$se.fit,predict.probit$fit+1.96*predict.probit$se.fit)
+
+#predict clog log 
+predict.hazard = predict(risky.hazard, newdata = new_pred, type = "response", se=T)
+predict.hazard
+#confidence interval
+
+c(predict.hazard$fit-1.96*predict.hazard$se.fit,predict.hazard$fit+1.96*predict.hazard$se.fit)
+```
+* The prediction for the flights described using Probit and Hazard model are same and is equal to 1.
+* The prediction obtained is same as what we got in step 13, however, the confidence interval in case of logit model is (0.9999997 - 1.0000002), whereas for other to, models its (1-1).
